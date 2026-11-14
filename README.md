@@ -63,5 +63,6 @@ Covered: split maths, two diners racing for the last item, idempotent retries, t
 - **No merchant login.** The restaurant view and demo controls are open. Set `DEMO_MODE=0` to turn both off.
 - Rate limits are per IP and in memory (`@nestjs/throttler`); a real deployment needs a shared store.
 
+- Brief: [docs/BRIEF.md](docs/BRIEF.md) · Demo script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
 - Spec: [docs/SPEC.md](docs/SPEC.md)
 - Build log: [docs/BUILD_LOG.md](docs/BUILD_LOG.md)
