@@ -80,7 +80,7 @@ const dict = {
   allCities: { ar: 'كل المدن', en: 'All cities' },
   expiresSoonest: { ar: 'أقرب انتهاء صلاحية', en: 'Soonest expiry' },
   check: { ar: 'عرض', en: 'Show' },
-  footer: { ar: 'مفهوم غير رسمي — غير تابع لـ Qlub.', en: 'Unofficial concept — not affiliated with Qlub.' },
+  footer: { ar: 'مقترح مستقل لـ Qlub — غير تابع لها رسميًا.', en: 'Independent proposal for Qlub — not affiliated with or endorsed by Qlub.' },
   language: { ar: 'English', en: 'العربية' },
 } satisfies Record<string, Record<Locale, string>>;
 

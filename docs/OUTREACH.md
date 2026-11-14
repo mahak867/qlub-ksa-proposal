@@ -31,7 +31,7 @@ Who to write to, in this order: a product lead who covers KSA; an engineering le
 > - payments that always finish within 90 seconds and can't charge twice
 > - a "where can I use my cashback" page by branch
 >
-> Demo (90 seconds): [VIDEO_URL]
+> Demo (90 seconds): https://drive.google.com/file/d/1DqjujF_QsnroKnIbuZOYYXfAjtVtgXMR/view
 > Try it: https://qlub-pay-web-mahak867s-projects.vercel.app
 > One-page brief: [BRIEF_URL]
 >
@@ -44,13 +44,13 @@ Who to write to, in this order: a product lead who covers KSA; an engineering le
 
 ## LinkedIn connection note (under 300 characters)
 
-> Hi [NAME], I built a small independent concept for clearer pay-at-table in KSA after reading public reviews: total before pay, opt-in membership, no stuck payments. 90-second demo: [VIDEO_URL]. I'd value 15 minutes of your feedback.
+> Hi [NAME], I built a small independent concept for clearer pay-at-table in KSA after reading public reviews: total before pay, opt-in membership, no stuck payments. 90-second demo: https://drive.google.com/file/d/1DqjujF_QsnroKnIbuZOYYXfAjtVtgXMR/view. I'd value 15 minutes of your feedback.
 
 ## Follow-up, day 5 (reply on the same thread)
 
 > Dear [NAME],
 >
-> A short follow-up in case my note got buried. Since I wrote, I [ONE REAL IMPROVEMENT, e.g. "added the restaurant reconciliation view"]. The 90-second demo is here: [VIDEO_URL].
+> A short follow-up in case my note got buried. Since I wrote, I [ONE REAL IMPROVEMENT, e.g. "added the restaurant reconciliation view"]. The 90-second demo is here: https://drive.google.com/file/d/1DqjujF_QsnroKnIbuZOYYXfAjtVtgXMR/view.
 >
 > If someone else on the team is a better person for this, I'd be grateful for a pointer.
 >

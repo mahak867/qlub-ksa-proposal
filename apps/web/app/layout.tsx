@@ -4,8 +4,8 @@ import { I18nProvider } from '@/lib/i18n';
 import { Shell } from './shell';
 
 export const metadata: Metadata = {
-  title: 'Pay at table — clarity concept',
-  description: 'Unofficial concept — not affiliated with Qlub.',
+  title: 'Pay-at-table proposal for Qlub KSA (unofficial)',
+  description: 'An independent proposal with a working prototype. Not affiliated with or endorsed by Qlub.',
 };
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, themeColor: '#0f5c4d' };

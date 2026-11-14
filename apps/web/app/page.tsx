@@ -14,11 +14,12 @@ export default function Home() {
   const ar = locale === 'ar';
   return (
     <>
-      <h1>{ar ? 'دفع واضح على الطاولة' : 'Clear pay-at-table'}</h1>
+      <p className="pill" style={{ marginTop: 8 }}>{ar ? 'مقترح مستقل لفريق Qlub في السعودية' : 'An independent proposal for Qlub’s KSA team'}</p>
+      <h1>{ar ? 'أربعة تحسينات لتجربة الدفع على الطاولة' : 'Four improvements to pay-at-table'}</h1>
       <p className="muted">
         {ar
-          ? 'مفهوم مستقل يعالج ما يذكره المستخدمون في المراجعات العامة: خلط الدفع بتطبيق المكافآت، الرسوم والإكرامية التي تظهر متأخرة، المدفوعات العالقة، والكاش باك الذي لا يمكن استخدامه.'
-          : 'An independent concept that addresses what diners report in public reviews: paying confused with the rewards app, tips and fees that appear late, stuck payments, and cashback that can’t be used.'}
+          ? 'اقتراحات لتجربة Qlub الحالية، مبنية على ما يذكره المستخدمون في المراجعات العامة: خلط الدفع بتطبيق المكافآت، الرسوم والإكرامية التي تظهر متأخرة، المدفوعات العالقة، والكاش باك الذي يصعب استخدامه. هذا ليس منتجًا منافسًا ولا يتبع Qlub رسميًا.'
+          : 'Suggestions for Qlub’s existing product, based on what diners report in public reviews: paying confused with the rewards app, tips and fees that appear late, stuck payments, and cashback that’s hard to use. This is not a competing product and is not affiliated with Qlub.'}
       </p>
       {err && <p className="error">{ar ? 'تعذر الوصول إلى الخادم التجريبي.' : 'Could not reach the demo API.'}</p>}
       <Link className="btn" href={info ? `/t/${info.token}` : '#'} aria-disabled={!info}>
