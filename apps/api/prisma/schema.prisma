@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Restaurant {
+  id        String   @id @default(cuid())
+  nameAr    String
+  nameEn    String
+  vatNumber String
+  branches  Branch[]
+}
+
+model Branch {
+  id              String          @id @default(cuid())
+  restaurantId    String
+  restaurant      Restaurant      @relation(fields: [restaurantId], references: [id])
+  nameAr          String
+  nameEn          String
+  city            String
+  earnsCashback   Boolean         @default(false)
+  acceptsCashback Boolean         @default(false)
+  invoiceCounter  Int             @default(0)
+  lastInvoiceHash String?
+  tables          Table[]
+  menu            MenuItem[]
+  cashback        CashbackEntry[]
+}
+
+model MenuItem {
+  id         String  @id @default(cuid())
+  branchId   String
+  branch     Branch  @relation(fields: [branchId], references: [id])
+  posCode    String
+  nameAr     String
+  nameEn     String
+  unitPrice  Int
+  @@unique([branchId, posCode])
+}
+
+model Table {
+  id       String  @id @default(cuid())
+  branchId String
+  branch   Branch  @relation(fields: [branchId], references: [id])
+  label    String
+  token    String  @unique
+  posTableCode String?
+  bills    Bill[]
+}
+
+enum BillStatus {
+  OPEN
+  PAID
+}
+
+enum SplitMode {
+  WHOLE
+  ITEMS
+  EQUAL
+  CUSTOM
+}
+
+model Bill {
+  id        String     @id @default(cuid())
+  tableId   String
+  table     Table      @relation(fields: [tableId], references: [id])
+  status    BillStatus @default(OPEN)
+  total     Int
+  splitMode SplitMode?
+  equalCount Int?
+  createdAt DateTime   @default(now())
+  items     BillItem[]
+  shares    Share[]
+  invoice   Invoice?
+}
+
+model BillItem {
+  id        String @id @default(cuid())
+  billId    String
+  bill      Bill   @relation(fields: [billId], references: [id])
+  nameAr    String
+  nameEn    String
+  quantity  Int
+  unitPrice Int
+}
+
+enum ShareStatus {
+  RESERVED
+  PAID
+  RELEASED
+}
+
+model Share {
+  id         String      @id @default(cuid())
+  billId     String
+  bill       Bill        @relation(fields: [billId], references: [id])
+  mode       SplitMode
+  amount     Int
+  equalIndex Int?
+  itemClaims Json?
+  status     ShareStatus @default(RESERVED)
+  createdAt  DateTime    @default(now())
+  payments   Payment[]
+}
+
+enum PaymentState {
+  CREATED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  REFUND_DUE
+  REFUNDED
+}
+
+enum PayMethod {
+  MADA
+  APPLE_PAY
+}
+
+model Payment {
+  id           String       @id @default(cuid())
+  shareId      String
+  share        Share        @relation(fields: [shareId], references: [id])
+  amount       Int
+  tip          Int
+  cashbackUsed Int          @default(0)
+  charge       Int
+  phone        String?
+  state        PaymentState @default(CREATED)
+  method       PayMethod
+  gatewayRef   String       @unique
+  deadlineAt   DateTime
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  @@index([state, deadlineAt])
+}
+
+model IdempotencyRecord {
+  key          String   @id
+  requestHash  String
+  statusCode   Int?
+  responseBody Json?
+  createdAt    DateTime @default(now())
+}
+
+model Invoice {
+  id           String   @id @default(cuid())
+  billId       String   @unique
+  bill         Bill     @relation(fields: [billId], references: [id])
+  number       String
+  issuedAt     DateTime
+  total        Int
+  vat          Int
+  qrBase64     String
+  previousHash String
+  hash         String
+  reportStatus String   @default("PENDING_MOCK")
+}
+
+enum MembershipStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model Membership {
+  id           String           @id @default(cuid())
+  phone        String
+  status       MembershipStatus @default(ACTIVE)
+  monthlyPrice Int
+  startedAt    DateTime         @default(now())
+  trialEndsAt  DateTime
+  nextChargeAt DateTime
+  cancelledAt  DateTime?
+  consent      ConsentRecord?
+}
+
+model ConsentRecord {
+  id           String     @id @default(cuid())
+  membershipId String     @unique
+  membership   Membership @relation(fields: [membershipId], references: [id])
+  paymentId    String?
+  textVersion  String
+  textShown    String
+  locale       String
+  acceptedAt   DateTime   @default(now())
+}
+
+enum CashbackType {
+  EARN
+  SPEND
+  EXPIRE
+}
+
+model CashbackEntry {
+  id        String       @id @default(cuid())
+  phone     String
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id])
+  type      CashbackType
+  amount    Int
+  expiresAt DateTime?
+  createdAt DateTime     @default(now())
+}
+
+model Notification {
+  id     String    @id @default(cuid())
+  phone  String
+  kind   String
+  body   String
+  sendAt DateTime
+  sentAt DateTime?
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  name      String
+  billId    String?
+  paymentId String?
+  props     Json?
+  at        DateTime @default(now())
+}
