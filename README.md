@@ -42,7 +42,7 @@ Open http://localhost:3000, press "Scan table 12". Use **Demo controls** to make
 ## Tests
 
 ```bash
-pnpm -r test   # core: 18 unit tests · api: 21 tests against a real Postgres (qlubpay_test)
+pnpm -r test   # core: 18 unit tests · api: 24 tests against a real Postgres (qlubpay_test)
 ```
 
 Covered: split maths, two diners racing for the last item, idempotent retries, tampered totals, hung payments expiring and releasing their share, late success accepted or refunded, one invoice per split bill with a decodable QR, paying never creating a membership, consent and one-tap cancel, cashback per branch.
@@ -57,11 +57,16 @@ Covered: split maths, two diners racing for the last item, idempotent retries, t
 | Consent record and one-tap cancel | OTP (`123456`), reminder delivery (stored only), membership price and trial (placeholders) |
 | Per-branch cashback rules and ledger | POS / Foodics menu feed |
 
-## Known limitations (do not deploy on real data)
+## Sign-in and security (demo)
 
-- **No real identity.** Phone numbers are not verified (OTP is the fixed demo code), so anyone who knows a number can see or spend its demo cashback. A real build needs an OTP-backed session.
-- **No merchant login.** The restaurant view and demo controls are open. Set `DEMO_MODE=0` to turn both off.
-- Rate limits are per IP and in memory (`@nestjs/throttler`); a real deployment needs a shared store.
+- **Diners** sign in with a phone number and a one-time code (demo code `123456`, nothing is sent). This gives a signed session token; only that session can see or spend its wallet, or view and cancel its membership. Paying needs no sign-in at all.
+- **Restaurants** sign in with a branch PIN (demo PIN `2468`) and can only see their own branch.
+- Set `SESSION_SECRET` (32+ characters) anywhere other than your laptop. Set `DEMO_MODE=0` to turn off the demo controls.
+- Still demo-grade: the OTP and PIN are fixed values, rate limits are in memory per instance, and there is no real SMS, card processing or ZATCA submission.
+
+## Deploying
+
+`apps/web` deploys to Vercel as a normal Next.js app (set `NEXT_PUBLIC_API_URL`). `apps/api` deploys to Vercel as one serverless function (`apps/api/vercel.json`, root directory `apps/api`) with `DATABASE_URL`, `SESSION_SECRET` and `CORS_ORIGIN`. On serverless there is no background timer: an overdue payment is finished the moment anyone reads it.
 
 - Brief: [docs/BRIEF.md](docs/BRIEF.md) · Demo script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
 - Spec: [docs/SPEC.md](docs/SPEC.md)

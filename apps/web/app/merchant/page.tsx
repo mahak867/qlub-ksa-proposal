@@ -1,7 +1,7 @@
 'use client';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, ApiFailure, getToken, setToken } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../shell';
 
@@ -47,17 +47,55 @@ function Merchant() {
     if (!branchId) api<{ branchId: string }>('/demo/info').then((i) => setBranchId(i.branchId)).catch((e) => setErr(e.message));
   }, [branchId]);
 
+  const [authed, setAuthed] = useState(false);
+  const [pin, setPin] = useState('');
   useEffect(() => {
-    if (!branchId) return;
+    if (getToken('merchant')) setAuthed(true);
+  }, []);
+
+  async function signIn() {
+    setErr(null);
+    try {
+      const r = await api<{ token: string; expiresAt: string; branchId: string }>('/auth/merchant', { method: 'POST', json: { branchId, pin } });
+      setToken('merchant', r);
+      setAuthed(true);
+    } catch {
+      setErr(ar ? 'رقم سري غير صحيح.' : 'Wrong PIN.');
+    }
+  }
+
+  useEffect(() => {
+    if (!branchId || !authed) return;
+    const auth = getToken('merchant');
+    const onErr = (e: unknown) => {
+      if (e instanceof ApiFailure && e.status === 401) {
+        setToken('merchant', null);
+        setAuthed(false);
+      } else setErr((e as Error).message);
+    };
     const load = () => {
-      api<Overview>(`/merchant/branches/${branchId}/overview`).then(setO).catch((e) => setErr(e.message));
-      api<Sync>(`/merchant/branches/${branchId}/sync-health`).then(setS).catch(() => {});
+      api<Overview>(`/merchant/branches/${branchId}/overview`, { auth }).then(setO).catch(onErr);
+      api<Sync>(`/merchant/branches/${branchId}/sync-health`, { auth }).then(setS).catch(() => {});
     };
     load();
     const i = setInterval(load, 3000);
     return () => clearInterval(i);
-  }, [branchId]);
+  }, [branchId, authed]);
 
+  if (!authed)
+    return (
+      <>
+        <h1>{ar ? 'دخول المطعم' : 'Restaurant sign-in'}</h1>
+        <label className="field">
+          <span>{ar ? 'الرقم السري' : 'PIN'} (demo: 2468)</span>
+          <input type="password" inputMode="numeric" dir="ltr" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <button className="btn" disabled={!branchId || pin.length < 4} onClick={signIn}>
+          {ar ? 'دخول' : 'Sign in'}
+        </button>
+        <ErrorNote message={err} />
+      </>
+    );
   if (err && !o) return <ErrorNote message={err} />;
   if (!o) return <p className="muted">…</p>;
   const f = o.metrics.funnel;

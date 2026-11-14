@@ -1,3 +1,32 @@
+/** Session tokens live in this browser only (a per-viewer convenience). */
+export type TokenKind = 'diner' | 'merchant';
+export function getToken(kind: TokenKind): string | undefined {
+  try {
+    const raw = localStorage.getItem(`session:${kind}`);
+    if (!raw) return undefined;
+    const { token, expiresAt, phone } = JSON.parse(raw);
+    if (new Date(expiresAt).getTime() < Date.now()) return undefined;
+    void phone;
+    return token;
+  } catch {
+    return undefined;
+  }
+}
+export function getSessionPhone(): string | undefined {
+  try {
+    const raw = localStorage.getItem('session:diner');
+    return raw && getToken('diner') ? JSON.parse(raw).phone : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function setToken(kind: TokenKind, value: { token: string; expiresAt: string; phone?: string; branchId?: string } | null) {
+  try {
+    if (value) localStorage.setItem(`session:${kind}`, JSON.stringify(value));
+    else localStorage.removeItem(`session:${kind}`);
+  } catch {}
+}
+
 export const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export class ApiFailure extends Error {
@@ -6,8 +35,10 @@ export class ApiFailure extends Error {
   }
 }
 
-export async function api<T>(path: string, init: RequestInit & { json?: unknown; idempotencyKey?: string } = {}): Promise<T> {
+export async function api<T>(path: string, init: RequestInit & { json?: unknown; idempotencyKey?: string; auth?: string } = {}): Promise<T> {
   const headers: Record<string, string> = {};
+  const token = init.auth ?? getToken('diner');
+  if (token) headers['authorization'] = `Bearer ${token}`;
   if (init.json !== undefined) headers['content-type'] = 'application/json';
   if (init.idempotencyKey) headers['idempotency-key'] = init.idempotencyKey;
   const res = await fetch(`${API}${path}`, {
@@ -84,6 +115,7 @@ const ERRORS: Record<string, { ar: string; en: string }> = {
   VALIDATION: { ar: 'تحقق من البيانات المدخلة.', en: 'Please check what you entered.' },
   CONSENT_REQUIRED: { ar: 'نحتاج موافقتك الصريحة على الشروط.', en: 'We need your explicit agreement to the terms.' },
   NOT_FOUND: { ar: 'غير موجود.', en: 'Not found.' },
+  UNAUTHORIZED: { ar: 'سجّل الدخول أولًا.', en: 'Please sign in first.' },
 };
 
 /** Translate an API error code; fall back to the server message. */

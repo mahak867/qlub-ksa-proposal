@@ -2,7 +2,8 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, use, useEffect, useRef, useState } from 'react';
 import { computeCharge, TIP_PRESETS_PERCENT, tipFromPercent } from '@qlub-pay/core';
-import { api, ApiFailure, errorText, newIdempotencyKey, PaymentView } from '@/lib/api';
+import { api, ApiFailure, errorText, getSessionPhone, newIdempotencyKey, PaymentView } from '@/lib/api';
+import { SignIn, SignedInAs } from '../../../signin';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../../../shell';
 
@@ -20,7 +21,8 @@ function Review({ token }: { token: string }) {
   const [tipChoice, setTipChoice] = useState<TipChoice>({ kind: 'none' });
   const [otherTip, setOtherTip] = useState('');
   const [useCb, setUseCb] = useState(false);
-  const [phone, setPhone] = useState('');
+  const [signedIn, setSignedIn] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,15 +50,14 @@ function Review({ token }: { token: string }) {
     invalid = true;
   }
 
-  async function lookupBalance() {
-    setErr(null);
-    try {
-      const w = await api<{ balance: number }>(`/cashback?phone=${encodeURIComponent(phone)}`);
-      setBalance(w.balance);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  }
+  // Signing in is optional: it lets the diner earn cashback, and spend it where accepted.
+  useEffect(() => {
+    if (!getSessionPhone()) return;
+    setSignedIn(true);
+    api<{ balance: number }>('/cashback')
+      .then((w) => setBalance(w.balance))
+      .catch(() => setSignedIn(false));
+  }, [showSignIn]);
 
   async function pay(method: 'MADA' | 'APPLE_PAY') {
     setBusy(true);
@@ -73,7 +74,6 @@ function Review({ token }: { token: string }) {
           cashbackUse: breakdown.cashbackUsed,
           method,
           expectedTotal: breakdown.charge,
-          ...(breakdown.cashbackUsed > 0 ? { phone } : {}),
         },
       });
       router.push(`/pay/${p.id}?t=${encodeURIComponent(token)}`);
@@ -135,31 +135,31 @@ function Review({ token }: { token: string }) {
       </div>
 
       <div className="card">
-        {accepts ? (
+        {!signedIn ? (
+          showSignIn ? (
+            <SignIn why={locale === 'ar' ? 'اختياري: سجّل لتكسب الكاش باك أو تستخدمه.' : 'Optional: sign in to earn or use cashback.'} onDone={() => setShowSignIn(false)} />
+          ) : (
+            <button className="btn secondary" onClick={() => setShowSignIn(true)}>
+              {locale === 'ar' ? 'اكسب الكاش باك (اختياري)' : 'Earn cashback (optional)'}
+            </button>
+          )
+        ) : (
           <>
-            <label className="check">
-              <input type="checkbox" checked={useCb} onChange={(e) => setUseCb(e.target.checked)} />
-              <span>{t('useCashback')}</span>
-            </label>
-            {useCb && (
-              <>
-                <label className="field">
-                  <span>{t('phoneForCashback')}</span>
-                  <input type="tel" dir="ltr" placeholder="+9665XXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                </label>
-                <button className="btn secondary" onClick={lookupBalance} disabled={!phone}>
-                  {t('check')}
-                </button>
-                {balance !== null && (
-                  <p>
-                    {t('balance')}: <Money value={balance} />
-                  </p>
-                )}
-              </>
+            <SignedInAs onSignOut={() => { setSignedIn(false); setUseCb(false); setBalance(null); }} />
+            {balance !== null && (
+              <p>
+                {t('balance')}: <Money value={balance} />
+              </p>
+            )}
+            {accepts && !!balance && (
+              <label className="check">
+                <input type="checkbox" checked={useCb} onChange={(e) => setUseCb(e.target.checked)} />
+                <span>{t('useCashback')}</span>
+              </label>
             )}
           </>
-        ) : accepts === false ? (
-          <p className="muted">{t('cashbackNotHere')}</p>
+        )}
+        {accepts === false ? (          <p className="muted">{t('cashbackNotHere')}</p>
         ) : null}
       </div>
 

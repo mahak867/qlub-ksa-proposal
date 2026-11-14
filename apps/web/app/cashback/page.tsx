@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, getSessionPhone } from '@/lib/api';
+import { SignIn, SignedInAs } from '../signin';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../shell';
 
@@ -28,7 +29,7 @@ export default function CashbackPage() {
   const { t, locale } = useI18n();
   const [city, setCity] = useState('');
   const [data, setData] = useState<Branches | null>(null);
-  const [phone, setPhone] = useState('+966500000001');
+  const [signedIn, setSignedIn] = useState(false);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const cityName = (c: string) => (locale === 'ar' ? CITY_AR[c] ?? c : c);
@@ -40,11 +41,16 @@ export default function CashbackPage() {
   async function look() {
     setErr(null);
     try {
-      setWallet(await api<Wallet>(`/cashback?phone=${encodeURIComponent(phone)}`));
-    } catch (e) {
-      setErr((e as Error).message);
+      setWallet(await api<Wallet>('/cashback'));
+      setSignedIn(true);
+    } catch {
+      setSignedIn(false);
+      setWallet(null);
     }
   }
+  useEffect(() => {
+    if (getSessionPhone()) look();
+  }, []);
 
   const row = (b: BranchRow) => (
     <div className="row" key={b.id}>
@@ -59,13 +65,11 @@ export default function CashbackPage() {
     <>
       <h1>{t('whereCashback')}</h1>
       <div className="card">
-        <label className="field">
-          <span>{t('phone')}</span>
-          <input type="tel" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </label>
-        <button className="btn secondary" onClick={look}>
-          {t('check')}
-        </button>
+        {signedIn ? (
+          <SignedInAs onSignOut={() => { setSignedIn(false); setWallet(null); }} />
+        ) : (
+          <SignIn why={locale === 'ar' ? 'سجّل برقم جوالك لترى رصيدك.' : 'Sign in with your mobile number to see your balance.'} onDone={look} />
+        )}
         {wallet && (
           <>
             <div className="row total">

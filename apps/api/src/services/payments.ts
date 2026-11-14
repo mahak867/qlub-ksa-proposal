@@ -229,26 +229,9 @@ export class PaymentService {
 
     const overdue = await this.db.payment.findMany({ where: { state: 'PROCESSING', deadlineAt: { lt: now } } });
     await each(overdue, async (p) => {
-      const status = await this.gateway.status(p.gatewayRef);
-      if (status === 'CAPTURED') {
-        await this.settleSuccess(p.id);
-        settled++;
-        return;
-      }
-      // Ask the gateway to void anything still pending before we tell the diner "not charged".
-      if (status === 'PENDING') await this.gateway.cancel(p.gatewayRef);
-      const did = await this.db.$transaction(async (tx) => {
-        const share = await tx.share.findUniqueOrThrow({ where: { id: p.shareId } });
-        await lockBill(tx, share.billId);
-        const ok = await cas(tx, p.id, 'PROCESSING', 'EXPIRED');
-        if (ok) {
-          await tx.share.updateMany({ where: { id: p.shareId, status: 'RESERVED' }, data: { status: 'RELEASED' } });
-          await this.cashback.release(tx, p.id);
-          await tx.event.create({ data: { name: 'payment_expired', billId: share.billId, paymentId: p.id } });
-        }
-        return ok;
-      });
-      if (did) expired++;
+      const r = await this.finishOverdue(p);
+      if (r === 'settled') settled++;
+      if (r === 'expired') expired++;
     });
 
     // Late captures (§5.4.3): a void can lose the race and webhooks can be lost, so keep
@@ -286,8 +269,39 @@ export class PaymentService {
     return { expired, settled, refunded, released, errors };
   }
 
+  /**
+   * Finish one PROCESSING payment past its deadline: settle it if the gateway captured,
+   * otherwise void at the gateway and expire it. Safe to call from anywhere, any number
+   * of times (compare-and-set), so it also runs when a diner looks at the payment. That
+   * keeps the 90-second promise even on serverless hosts where no background job runs.
+   */
+  async finishOverdue(p: { id: string; gatewayRef: string; shareId: string; state: PaymentState; deadlineAt: Date }): Promise<'settled' | 'expired' | 'none'> {
+    if (p.state !== 'PROCESSING' || p.deadlineAt.getTime() > this.now().getTime()) return 'none';
+    const status = await this.gateway.status(p.gatewayRef);
+    if (status === 'CAPTURED') {
+      await this.settleSuccess(p.id);
+      return 'settled';
+    }
+    // Ask the gateway to void anything still pending before we tell the diner "not charged".
+    if (status === 'PENDING') await this.gateway.cancel(p.gatewayRef);
+    const did = await this.db.$transaction(async (tx) => {
+      const share = await tx.share.findUniqueOrThrow({ where: { id: p.shareId } });
+      await lockBill(tx, share.billId);
+      const ok = await cas(tx, p.id, 'PROCESSING', 'EXPIRED');
+      if (ok) {
+        await tx.share.updateMany({ where: { id: p.shareId, status: 'RESERVED' }, data: { status: 'RELEASED' } });
+        await this.cashback.release(tx, p.id);
+        await tx.event.create({ data: { name: 'payment_expired', billId: share.billId, paymentId: p.id } });
+      }
+      return ok;
+    });
+    return did ? 'expired' : 'none';
+  }
+
   async get(paymentId: string) {
-    const p = await this.db.payment.findUnique({ where: { id: paymentId }, include: { share: { include: { bill: { include: { invoice: true, table: true } } } } } });
+    const row = await this.db.payment.findUnique({ where: { id: paymentId } });
+    if (row) await this.finishOverdue(row).catch((e) => console.error('lazy recovery failed', e));
+    const p = await this.db.payment.findUnique({ where: { id: paymentId }, include: { share: { include: { bill: { include: { invoice: true } } } } } });
     if (!p) throw new ApiError('NOT_FOUND', 'payment not found');
     return {
       id: p.id,

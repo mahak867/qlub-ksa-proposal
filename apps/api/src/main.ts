@@ -10,7 +10,7 @@ async function main() {
   const app = await NestFactory.create(appModule(container), { logger: ['error', 'warn', 'log'] });
   app.enableCors({
     origin: (process.env.CORS_ORIGIN ?? 'http://localhost:3000').split(','),
-    allowedHeaders: ['content-type', 'idempotency-key'],
+    allowedHeaders: ['content-type', 'idempotency-key', 'authorization'],
   });
   app.useGlobalFilters(new ErrorFilter());
   app.enableShutdownHooks();

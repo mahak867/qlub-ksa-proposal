@@ -17,12 +17,10 @@ export function consentText(locale: 'ar' | 'en'): string {
     : `Optional membership. Free for ${t.trialDays} days, then SAR ${price} per month, renewing automatically. We remind you ${t.reminderDaysBefore} days before any charge. Cancel in one tap at any time, free.`;
 }
 
-/** Mock OTP for the demo. */
-export const DEMO_OTP = '123456';
 
 export interface JoinInput {
+  /** comes from a verified diner session, never from the request body */
   phone: string;
-  otp: string;
   consent: boolean;
   textVersion: string;
   locale: 'ar' | 'en';
@@ -40,7 +38,6 @@ export class MembershipService {
   async join(input: JoinInput) {
     if (input.consent !== true) throw new ApiError('CONSENT_REQUIRED', 'membership needs an explicit yes');
     if (input.textVersion !== MEMBERSHIP_TERMS.version) throw new ApiError('CONSENT_REQUIRED', 'the terms changed; please read them again');
-    if (input.otp !== DEMO_OTP) throw new ApiError('VALIDATION', 'wrong verification code');
     if (input.paymentId) {
       const p = await this.db.payment.findUnique({ where: { id: input.paymentId } });
       if (!p || p.state !== 'SUCCEEDED') throw new ApiError('VALIDATION', 'the offer is only available after a successful payment');
@@ -69,15 +66,27 @@ export class MembershipService {
     });
   }
 
-  /** One tap, immediate, free. Idempotent. */
-  async cancel(id: string) {
+  /** One tap, immediate, free. Idempotent. Only the owner's session can cancel. */
+  async cancel(id: string, phone: string) {
     const m = await this.db.membership.findUnique({ where: { id } });
-    if (!m) throw new ApiError('NOT_FOUND', 'membership not found');
+    if (!m || m.phone !== phone) throw new ApiError('NOT_FOUND', 'membership not found');
     if (m.status === 'ACTIVE') {
       await this.db.membership.update({ where: { id }, data: { status: 'CANCELLED', cancelledAt: this.now() } });
       await this.db.notification.deleteMany({ where: { phone: m.phone, sentAt: null, kind: 'trial_ending' } });
       await this.db.event.create({ data: { name: 'membership_cancelled' } });
     }
+    return this.view(id);
+  }
+
+  /** The signed-in phone's active (or most recent) membership. */
+  async mine(phone: string) {
+    const m = await this.db.membership.findFirst({ where: { phone }, orderBy: [{ status: 'asc' }, { startedAt: 'desc' }] });
+    return m ? this.view(m.id) : null;
+  }
+
+  async viewOwned(id: string, phone: string) {
+    const m = await this.db.membership.findUnique({ where: { id } });
+    if (!m || m.phone !== phone) throw new ApiError('NOT_FOUND', 'membership not found');
     return this.view(id);
   }
 

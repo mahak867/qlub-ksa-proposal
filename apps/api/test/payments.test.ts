@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { createContainer, Container } from '../src/container';
 import { seed, DEMO_TABLE_TOKEN, DEMO_PHONE } from '../src/seed';
-import { MEMBERSHIP_TERMS, DEMO_OTP } from '../src/services/memberships';
+import { MEMBERSHIP_TERMS } from '../src/services/memberships';
+import { dinerLogin, merchantLogin, verify, requireDiner, requireMerchant, DEMO_OTP } from '../src/auth';
 import { decodeTlv } from '@qlub-pay/core';
 
 const db = new PrismaClient();
@@ -195,13 +196,14 @@ describe('P2: paying never enrols anyone', () => {
   });
 
   it('joining needs an explicit yes on the current terms; cancel is immediate', async () => {
-    const base = { phone: DEMO_PHONE, otp: DEMO_OTP, textVersion: MEMBERSHIP_TERMS.version, locale: 'ar' as const };
+    const base = { phone: DEMO_PHONE, textVersion: MEMBERSHIP_TERMS.version, locale: 'ar' as const };
     await expect(c.memberships.join({ ...base, consent: false })).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });
     await expect(c.memberships.join({ ...base, consent: true, textVersion: 'old' })).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });
     const m = await c.memberships.join({ ...base, consent: true });
     expect(m.consent?.text).toContain('إلغاء');
     expect(await db.notification.count()).toBe(1);
-    const cancelled = await c.memberships.cancel(m.id);
+    await expect(c.memberships.cancel(m.id, '+966500000099')).rejects.toMatchObject({ code: 'NOT_FOUND' }); // not the owner
+    const cancelled = await c.memberships.cancel(m.id, DEMO_PHONE);
     expect(cancelled.status).toBe('CANCELLED');
     expect(cancelled.nextChargeAt).toBeNull();
     expect(await db.notification.count()).toBe(0);
@@ -305,10 +307,43 @@ describe('review fixes', () => {
   });
 
   it('membership offer needs a succeeded payment, and one phone gets one active membership', async () => {
-    const base = { phone: DEMO_PHONE, otp: DEMO_OTP, textVersion: MEMBERSHIP_TERMS.version, locale: 'en' as const, consent: true };
+    const base = { phone: DEMO_PHONE, textVersion: MEMBERSHIP_TERMS.version, locale: 'en' as const, consent: true };
     await expect(c.memberships.join({ ...base, paymentId: 'nope' })).rejects.toMatchObject({ code: 'VALIDATION' });
     const m1 = await c.memberships.join(base);
     const m2 = await c.memberships.join(base);
     expect(m2.id).toBe(m1.id);
+  });
+});
+
+describe('sessions and lazy recovery', () => {
+  it('a diner token proves the phone; tampered or expired tokens are rejected', () => {
+    expect(() => dinerLogin(DEMO_PHONE, '000000')).toThrow();
+    const { token } = dinerLogin(DEMO_PHONE, DEMO_OTP);
+    expect(requireDiner(`Bearer ${token}`)).toBe(DEMO_PHONE);
+    const [body, mac] = token.split('.');
+    const forged = Buffer.from(JSON.stringify({ kind: 'diner', phone: '+966500000099', exp: Date.now() + 1e6 })).toString('base64url');
+    expect(() => requireDiner(`Bearer ${forged}.${mac}`)).toThrow();
+    expect(verify(token, Date.now() + 13 * 3600_000)).toBeNull();
+    expect(() => requireDiner(undefined)).toThrow();
+    expect(body.length).toBeGreaterThan(0);
+  });
+
+  it('a merchant token only opens its own branch, and diners cannot use it', () => {
+    const { token } = merchantLogin('branch-a', '2468');
+    expect(() => requireMerchant(`Bearer ${token}`, 'branch-a')).not.toThrow();
+    expect(() => requireMerchant(`Bearer ${token}`, 'branch-b')).toThrow();
+    expect(() => requireDiner(`Bearer ${token}`)).toThrow();
+    expect(() => merchantLogin('branch-a', '0000')).toThrow();
+  });
+
+  it('looking at a stuck payment finishes it, even with no background job', async () => {
+    const b = await bill();
+    const s = await c.bills.createShare(b.id, { mode: 'WHOLE' });
+    c.gateway.mode = 'HANG';
+    const p = await c.payments.create(key(), { shareId: s.id, tip: 0, cashbackUse: 0, method: 'MADA', expectedTotal: s.amount });
+    expect((await c.payments.get(p.id)).status).toBe('CHECKING');
+    clock = new Date(clock.getTime() + 91_000);
+    expect((await c.payments.get(p.id)).status).toBe('NOT_CHARGED'); // no recover() call
+    expect((await c.bills.getByToken(DEMO_TABLE_TOKEN)).remaining).toBe(b.total);
   });
 });

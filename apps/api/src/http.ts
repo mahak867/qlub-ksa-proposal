@@ -24,7 +24,7 @@ import { ThrottlerGuard, ThrottlerModule, Throttle } from '@nestjs/throttler';
 import { ApiError } from './errors';
 import { Container } from './container';
 import { DEMO_PHONE, seed } from './seed';
-import { DEMO_OTP } from './services/memberships';
+import { DEMO_MERCHANT_PIN, DEMO_OTP, dinerLogin, merchantLogin, optionalDiner, requireDiner, requireMerchant } from './auth';
 
 export const CONTAINER = 'CONTAINER';
 
@@ -52,20 +52,17 @@ const PaymentBody = z
     cashbackUse: halalas.default(0),
     method: z.enum(['MADA', 'APPLE_PAY']),
     expectedTotal: halalas,
-    phone: phone.optional(),
   })
   .strict();
 
 const JoinBody = z.object({
-  phone,
-  otp: z.string(),
   consent: z.boolean(),
   textVersion: z.string(),
   locale: z.enum(['ar', 'en']),
   paymentId: z.string().optional(),
 });
 
-/** Demo and merchant routes exist only when DEMO_MODE is not "0". They have no auth: never enable them on real data. */
+/** Demo routes exist only when DEMO_MODE is not "0". They have no auth: never enable them on real data. */
 const DEMO = process.env.DEMO_MODE !== '0';
 function demoOnly() {
   if (!DEMO) throw new ApiError('NOT_FOUND', 'not found');
@@ -77,7 +74,33 @@ class ApiController {
 
   @Get('health')
   health() {
-    return { ok: true, demo: { phone: DEMO_PHONE, otp: DEMO_OTP } };
+    return { ok: true };
+  }
+
+  /** Mock SMS: in the demo the code is always the same and nothing is sent. */
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Post('auth/otp/request')
+  @HttpCode(200)
+  requestOtp(@Body() body: unknown) {
+    parse(z.object({ phone }), body);
+    return { sent: true, demoHint: DEMO ? `demo code: ${DEMO_OTP}` : undefined };
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Post('auth/otp/verify')
+  @HttpCode(200)
+  verifyOtp(@Body() body: unknown) {
+    const b = parse(z.object({ phone, otp: z.string().regex(/^\d{6}$/) }), body);
+    return dinerLogin(b.phone, b.otp);
+  }
+
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Post('auth/merchant')
+  @HttpCode(200)
+  async merchantSignIn(@Body() body: unknown) {
+    const b = parse(z.object({ branchId: z.string(), pin: z.string().regex(/^\d{4,8}$/) }), body);
+    if (!(await this.c.db.branch.findUnique({ where: { id: b.branchId } }))) throw new ApiError('NOT_FOUND', 'branch not found');
+    return merchantLogin(b.branchId, b.pin);
   }
 
   @Get('tables/:token/bill')
@@ -105,8 +128,9 @@ class ApiController {
 
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('payments')
-  createPayment(@Headers('idempotency-key') key: string | undefined, @Body() body: unknown) {
-    return this.c.payments.create(key, parse(PaymentBody, body));
+  createPayment(@Headers('idempotency-key') key: string | undefined, @Headers('authorization') auth: string | undefined, @Body() body: unknown) {
+    // The phone (for earning or spending cashback) comes only from a verified session.
+    return this.c.payments.create(key, { ...parse(PaymentBody, body), phone: optionalDiner(auth) });
   }
 
   @Get('payments/:id')
@@ -133,24 +157,28 @@ class ApiController {
 
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('memberships')
-  join(@Body() body: unknown) {
-    return this.c.memberships.join(parse(JoinBody, body));
+  join(@Headers('authorization') auth: string | undefined, @Body() body: unknown) {
+    return this.c.memberships.join({ ...parse(JoinBody, body), phone: requireDiner(auth) });
+  }
+
+  @Get('memberships/mine')
+  mine(@Headers('authorization') auth: string | undefined) {
+    return this.c.memberships.mine(requireDiner(auth));
   }
 
   @Get('memberships/:id')
-  membership(@Param('id') id: string) {
-    return this.c.memberships.view(id);
+  membership(@Headers('authorization') auth: string | undefined, @Param('id') id: string) {
+    return this.c.memberships.viewOwned(id, requireDiner(auth));
   }
 
   @Delete('memberships/:id')
-  cancel(@Param('id') id: string) {
-    return this.c.memberships.cancel(id);
+  cancel(@Headers('authorization') auth: string | undefined, @Param('id') id: string) {
+    return this.c.memberships.cancel(id, requireDiner(auth));
   }
 
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Get('cashback')
-  wallet(@Query('phone') p: string) {
-    return this.c.cashback.wallet(parse(phone, p));
+  wallet(@Headers('authorization') auth: string | undefined) {
+    return this.c.cashback.wallet(requireDiner(auth));
   }
 
   @Get('cashback/branches')
@@ -159,14 +187,14 @@ class ApiController {
   }
 
   @Get('merchant/branches/:id/overview')
-  overview(@Param('id') id: string) {
-    demoOnly();
+  overview(@Headers('authorization') auth: string | undefined, @Param('id') id: string) {
+    requireMerchant(auth, id);
     return this.c.merchant.overview(id);
   }
 
   @Get('merchant/branches/:id/sync-health')
-  syncHealth(@Param('id') id: string) {
-    demoOnly();
+  syncHealth(@Headers('authorization') auth: string | undefined, @Param('id') id: string) {
+    requireMerchant(auth, id);
     return this.c.merchant.syncHealth(id);
   }
 
@@ -174,7 +202,7 @@ class ApiController {
   async demoInfo() {
     demoOnly();
     const t = await this.c.db.table.findFirst({ where: { label: '12' }, include: { branch: true } });
-    return { token: t?.token, branchId: t?.branchId, gatewayMode: this.c.gateway.mode, phone: DEMO_PHONE, otp: DEMO_OTP };
+    return { token: t?.token, branchId: t?.branchId, gatewayMode: this.c.gateway.mode, phone: DEMO_PHONE, otp: DEMO_OTP, merchantPin: DEMO_MERCHANT_PIN };
   }
 
   @Post('demo/gateway-mode')
@@ -238,6 +266,8 @@ export function appModule(container: Container) {
   class AppModule implements OnModuleInit, OnModuleDestroy {
     timer?: NodeJS.Timeout;
     onModuleInit() {
+      // Serverless hosts freeze between requests, so no timer there; reads finish overdue payments.
+      if (process.env.VERCEL) return;
       // Recovery job (§5.4): every 15 seconds.
       this.timer = setInterval(() => container.payments.recover().catch((e) => console.error('recovery failed', e)), 15_000);
     }

@@ -10,7 +10,7 @@ type Mode = 'APPROVE' | 'DECLINE' | 'HANG' | 'LATE_SUCCESS';
 export default function Demo() {
   const { locale } = useI18n();
   const ar = locale === 'ar';
-  const [info, setInfo] = useState<{ token: string; branchId: string; gatewayMode: Mode; phone: string; otp: string } | null>(null);
+  const [info, setInfo] = useState<{ token: string; branchId: string; gatewayMode: Mode; phone: string; otp: string; merchantPin: string } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState('');
@@ -70,7 +70,7 @@ export default function Demo() {
         </button>
         {info && (
           <p className="muted">
-            {ar ? 'جوال تجريبي' : 'Demo phone'}: <bdi dir="ltr">{info.phone}</bdi> · OTP <bdi dir="ltr">{info.otp}</bdi>
+            {ar ? 'جوال تجريبي' : 'Demo phone'}: <bdi dir="ltr">{info.phone}</bdi> · OTP <bdi dir="ltr">{info.otp}</bdi> · {ar ? 'رقم المطعم' : 'Restaurant PIN'} <bdi dir="ltr">{info.merchantPin}</bdi>
           </p>
         )}
       </div>

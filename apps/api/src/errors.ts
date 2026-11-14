@@ -8,7 +8,9 @@ export type ErrorCode =
   | 'IDEMPOTENCY_KEY_REQUIRED'
   | 'CASHBACK_UNAVAILABLE'
   | 'CONSENT_REQUIRED'
-  | 'INVALID_SPLIT';
+  | 'INVALID_SPLIT'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN';
 
 const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
@@ -21,6 +23,8 @@ const STATUS: Record<ErrorCode, number> = {
   CASHBACK_UNAVAILABLE: 409,
   CONSENT_REQUIRED: 400,
   INVALID_SPLIT: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
 };
 
 export class ApiError extends Error {

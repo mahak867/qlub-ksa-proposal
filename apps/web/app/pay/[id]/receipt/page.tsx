@@ -2,7 +2,8 @@
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { use, useEffect, useState } from 'react';
-import { api, ApiFailure, PaymentView } from '@/lib/api';
+import { api, ApiFailure, errorText, getSessionPhone, PaymentView } from '@/lib/api';
+import { SignIn } from '../../../signin';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../../../shell';
 
@@ -116,8 +117,7 @@ function MembershipOffer({ paymentId }: { paymentId: string }) {
   const { t, locale } = useI18n();
   const [terms, setTerms] = useState<Terms | null>(null);
   const [state, setState] = useState<'idle' | 'form' | 'dismissed'>('idle');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
+  const [signedIn, setSignedIn] = useState(false);
   const [agree, setAgree] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [joined, setJoined] = useState<string | null>(null);
@@ -142,11 +142,11 @@ function MembershipOffer({ paymentId }: { paymentId: string }) {
     try {
       const m = await api<{ id: string }>('/memberships', {
         method: 'POST',
-        json: { phone, otp, consent: agree, textVersion: terms!.version, locale, paymentId },
+        json: { consent: agree, textVersion: terms!.version, locale, paymentId },
       });
       setJoined(m.id);
     } catch (e) {
-      setErr(e instanceof ApiFailure ? e.message : String(e));
+      setErr(e instanceof ApiFailure ? errorText(e.code, locale, e.message) : String(e));
     }
   }
 
@@ -168,14 +168,7 @@ function MembershipOffer({ paymentId }: { paymentId: string }) {
         </div>
       ) : (
         <>
-          <label className="field">
-            <span>{t('phone')}</span>
-            <input type="tel" dir="ltr" placeholder="+9665XXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>{t('otp')} (demo: 123456)</span>
-            <input type="text" inputMode="numeric" dir="ltr" value={otp} onChange={(e) => setOtp(e.target.value)} />
-          </label>
+          {!(signedIn || getSessionPhone()) && <SignIn onDone={() => setSignedIn(true)} />}
           <label className="check">
             <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
             <span>{t('agree')}</span>
@@ -185,7 +178,7 @@ function MembershipOffer({ paymentId }: { paymentId: string }) {
             <button className="btn secondary" onClick={() => setState('dismissed')}>
               {t('noThanks')}
             </button>
-            <button className="btn" disabled={!agree || !phone || !otp} onClick={join}>
+            <button className="btn" disabled={!agree || !(signedIn || getSessionPhone())} onClick={join}>
               {t('join')}
             </button>
           </div>
