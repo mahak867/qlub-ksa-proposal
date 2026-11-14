@@ -68,6 +68,7 @@ Covered: split maths, two diners racing for the last item, idempotent retries, t
 
 `apps/web` deploys to Vercel as a normal Next.js app (set `NEXT_PUBLIC_API_URL`). `apps/api` deploys to Vercel as one serverless function (`apps/api/vercel.json`, root directory `apps/api`) with `DATABASE_URL`, `SESSION_SECRET` and `CORS_ORIGIN`. On serverless there is no background timer: an overdue payment is finished the moment anyone reads it.
 
+- **Live demo:** https://qlub-pay-web-mahak867s-projects.vercel.app (demo phone code `123456`, restaurant PIN `2468`)
 - Brief: [docs/BRIEF.md](docs/BRIEF.md) · Demo script: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md)
 - Spec: [docs/SPEC.md](docs/SPEC.md)
 - Build log: [docs/BUILD_LOG.md](docs/BUILD_LOG.md)

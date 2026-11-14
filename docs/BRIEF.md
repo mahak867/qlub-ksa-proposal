@@ -1,7 +1,7 @@
 # Clear pay-at-table for KSA: a one-page brief
 
 > Independent concept by Mahak Fahad. Not affiliated with Qlub. Built from public information only.
-> Demo: `[DEMO_URL]` · 90-second video: `[VIDEO_URL]` · Code: github.com/mahak867/qlub-pay
+> Demo: https://qlub-pay-web-mahak867s-projects.vercel.app · 90-second video: `[VIDEO_URL]` · Code: github.com/mahak867/qlub-pay
 
 ## The observation
 

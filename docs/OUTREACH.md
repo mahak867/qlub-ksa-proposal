@@ -32,7 +32,7 @@ Who to write to, in this order: a product lead who covers KSA; an engineering le
 > - a "where can I use my cashback" page by branch
 >
 > Demo (90 seconds): [VIDEO_URL]
-> Try it: [DEMO_URL]
+> Try it: https://qlub-pay-web-mahak867s-projects.vercel.app
 > One-page brief: [BRIEF_URL]
 >
 > It's independent and unofficial, built only from public information, and I'm sure I've misunderstood things you already know. Would you have 15 minutes for feedback? I'd be glad to hear what's wrong with it.
@@ -60,7 +60,7 @@ Who to write to, in this order: a product lead who covers KSA; an engineering le
 
 > Dear [NAME],
 >
-> This is my last note on this, as I don't want to crowd your inbox. The concept and brief will stay at [DEMO_URL] if they're ever useful. Thank you for building a product worth studying.
+> This is my last note on this, as I don't want to crowd your inbox. The concept and brief will stay at https://qlub-pay-web-mahak867s-projects.vercel.app if they're ever useful. Thank you for building a product worth studying.
 >
 > Mahak
 
