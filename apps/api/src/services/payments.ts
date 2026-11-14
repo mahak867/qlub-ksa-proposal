@@ -241,7 +241,7 @@ export class PaymentService {
   }
 
   async get(paymentId: string) {
-    const p = await this.db.payment.findUnique({ where: { id: paymentId }, include: { share: { include: { bill: { include: { invoice: true } } } } } });
+    const p = await this.db.payment.findUnique({ where: { id: paymentId }, include: { share: { include: { bill: { include: { invoice: true, table: true } } } } } });
     if (!p) throw new ApiError('NOT_FOUND', 'payment not found');
     return {
       id: p.id,
@@ -257,6 +257,9 @@ export class PaymentService {
       billId: p.share.billId,
       billPaid: p.share.bill.status === 'PAID',
       invoiceNumber: p.share.bill.invoice?.number ?? null,
+      tableToken: p.share.bill.table.token,
+      /** where "try again" should go: the same share if it is still held, otherwise choose again */
+      retry: p.state === 'FAILED' && p.share.status === 'RESERVED' ? 'REVIEW' : 'SPLIT',
     };
   }
 }
