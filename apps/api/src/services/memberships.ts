@@ -41,6 +41,12 @@ export class MembershipService {
     if (input.consent !== true) throw new ApiError('CONSENT_REQUIRED', 'membership needs an explicit yes');
     if (input.textVersion !== MEMBERSHIP_TERMS.version) throw new ApiError('CONSENT_REQUIRED', 'the terms changed; please read them again');
     if (input.otp !== DEMO_OTP) throw new ApiError('VALIDATION', 'wrong verification code');
+    if (input.paymentId) {
+      const p = await this.db.payment.findUnique({ where: { id: input.paymentId } });
+      if (!p || p.state !== 'SUCCEEDED') throw new ApiError('VALIDATION', 'the offer is only available after a successful payment');
+    }
+    const existing = await this.db.membership.findFirst({ where: { phone: input.phone, status: 'ACTIVE' } });
+    if (existing) return this.view(existing.id);
     const now = this.now();
     const trialEndsAt = new Date(now.getTime() + MEMBERSHIP_TERMS.trialDays * 86400_000);
     return this.db.$transaction(async (tx) => {

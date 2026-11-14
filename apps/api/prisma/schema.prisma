@@ -152,7 +152,7 @@ model Invoice {
   id           String   @id @default(cuid())
   billId       String   @unique
   bill         Bill     @relation(fields: [billId], references: [id])
-  number       String
+  number       String   @unique
   issuedAt     DateTime
   total        Int
   vat          Int
@@ -203,8 +203,11 @@ model CashbackEntry {
   branch    Branch       @relation(fields: [branchId], references: [id])
   type      CashbackType
   amount    Int
+  paymentId String?
   expiresAt DateTime?
   createdAt DateTime     @default(now())
+  @@index([phone])
+  @@index([paymentId])
 }
 
 model Notification {

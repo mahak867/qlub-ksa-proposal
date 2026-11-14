@@ -14,6 +14,8 @@ export type GatewayStatus = 'CAPTURED' | 'DECLINED' | 'NOT_FOUND' | 'PENDING';
 export interface Gateway {
   charge(req: ChargeRequest): Promise<ChargeResult>;
   status(reference: string): Promise<GatewayStatus>;
+  /** Void a pending charge. A real gateway may still capture if the void loses the race. */
+  cancel(reference: string): Promise<void>;
 }
 
 /**
@@ -40,6 +42,12 @@ export class MockGateway implements Gateway {
 
   async status(reference: string): Promise<GatewayStatus> {
     return this.charges.get(reference)?.status ?? 'NOT_FOUND';
+  }
+
+  async cancel(reference: string): Promise<void> {
+    const c = this.charges.get(reference);
+    // HANG voids cleanly; LATE_SUCCESS simulates a capture that wins the race against the void.
+    if (c && c.status === 'PENDING' && c.outcome === 'HANG') c.status = 'DECLINED';
   }
 
   /** Demo/test hook: a pending LATE_SUCCESS charge finally captures. */

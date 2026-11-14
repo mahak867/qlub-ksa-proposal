@@ -150,11 +150,18 @@ export class BillService {
     }
   }
 
+  async getShare(shareId: string) {
+    const s = await this.db.share.findUnique({ where: { id: shareId }, include: { bill: { include: { table: { include: { branch: true } } } } } });
+    if (!s) throw new ApiError('NOT_FOUND', 'share not found');
+    return { id: s.id, billId: s.billId, mode: s.mode, amount: s.amount, status: s.status, acceptsCashback: s.bill.table.branch.acceptsCashback };
+  }
+
   async releaseShare(shareId: string) {
     return this.db.$transaction(async (tx) => {
-      const share = await tx.share.findUnique({ where: { id: shareId }, include: { payments: true } });
-      if (!share) throw new ApiError('NOT_FOUND', 'share not found');
-      await lockBill(tx, share.billId);
+      const found = await tx.share.findUnique({ where: { id: shareId } });
+      if (!found) throw new ApiError('NOT_FOUND', 'share not found');
+      await lockBill(tx, found.billId);
+      const share = await tx.share.findUniqueOrThrow({ where: { id: shareId }, include: { payments: true } });
       if (share.payments.some((p) => p.state === 'CREATED' || p.state === 'PROCESSING')) {
         throw new ApiError('PAYMENT_IN_PROGRESS', 'a payment for this share is still being checked');
       }

@@ -2,7 +2,7 @@
 import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import { equalParts } from '@qlub-pay/core';
-import { api, Bill, Share } from '@/lib/api';
+import { api, ApiFailure, Bill, errorText, Share } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../../../shell';
 
@@ -66,9 +66,9 @@ export default function SplitPage({ params }: { params: Promise<{ token: string 
               ? { mode, amount: preview }
               : { mode };
       const share = await api<Share>(`/bills/${bill.id}/shares`, { method: 'POST', json: body });
-      router.push(`/t/${token}/review?share=${share.id}&amount=${share.amount}`);
+      router.push(`/t/${token}/review?share=${share.id}`);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(e instanceof ApiFailure ? errorText(e.code, locale, e.message) : (e as Error).message);
       setBusy(false);
     }
   }
@@ -106,11 +106,11 @@ export default function SplitPage({ params }: { params: Promise<{ token: string 
                   <Money value={i.unitPrice} /> {free < i.quantity && <small className="muted">· {free}/{i.quantity}</small>}
                 </span>
                 <span className="stepper">
-                  <button aria-label="−" onClick={() => setQty({ ...qty, [i.id]: Math.max(0, q - 1) })} disabled={q === 0}>
+                  <button aria-label={locale === 'ar' ? `أقل من ${name(i)}` : `One less ${name(i)}`} onClick={() => setQty({ ...qty, [i.id]: Math.max(0, q - 1) })} disabled={q === 0}>
                     −
                   </button>
                   <bdi aria-live="polite">{q}</bdi>
-                  <button aria-label="+" onClick={() => setQty({ ...qty, [i.id]: Math.min(free, q + 1) })} disabled={q >= free}>
+                  <button aria-label={locale === 'ar' ? `أكثر من ${name(i)}` : `One more ${name(i)}`} onClick={() => setQty({ ...qty, [i.id]: Math.min(free, q + 1) })} disabled={q >= free}>
                     +
                   </button>
                 </span>

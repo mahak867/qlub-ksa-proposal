@@ -42,7 +42,7 @@ Open http://localhost:3000, press "Scan table 12". Use **Demo controls** to make
 ## Tests
 
 ```bash
-pnpm -r test   # core: 18 unit tests · api: 15 tests against a real Postgres (qlubpay_test)
+pnpm -r test   # core: 18 unit tests · api: 21 tests against a real Postgres (qlubpay_test)
 ```
 
 Covered: split maths, two diners racing for the last item, idempotent retries, tampered totals, hung payments expiring and releasing their share, late success accepted or refunded, one invoice per split bill with a decodable QR, paying never creating a membership, consent and one-tap cancel, cashback per branch.
@@ -56,6 +56,12 @@ Covered: split maths, two diners racing for the last item, idempotent retries, t
 | ZATCA QR tags 1–5 (TLV, UTF-8 byte lengths) | Tags 6–9, XML hash, signing, ZATCA reporting |
 | Consent record and one-tap cancel | OTP (`123456`), reminder delivery (stored only), membership price and trial (placeholders) |
 | Per-branch cashback rules and ledger | POS / Foodics menu feed |
+
+## Known limitations (do not deploy on real data)
+
+- **No real identity.** Phone numbers are not verified (OTP is the fixed demo code), so anyone who knows a number can see or spend its demo cashback. A real build needs an OTP-backed session.
+- **No merchant login.** The restaurant view and demo controls are open. Set `DEMO_MODE=0` to turn both off.
+- Rate limits are per IP and in memory (`@nestjs/throttler`); a real deployment needs a shared store.
 
 - Spec: [docs/SPEC.md](docs/SPEC.md)
 - Build log: [docs/BUILD_LOG.md](docs/BUILD_LOG.md)

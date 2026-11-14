@@ -67,11 +67,26 @@ export interface PaymentView {
   billId: string;
   billPaid: boolean;
   invoiceNumber: string | null;
-  tableToken: string;
   retry: 'REVIEW' | 'SPLIT';
 }
 
 /** One key per press of the pay button, kept across retries of that press. */
 export function newIdempotencyKey(): string {
   return crypto.randomUUID();
+}
+
+const ERRORS: Record<string, { ar: string; en: string }> = {
+  TOTAL_CHANGED: { ar: 'تغيّر المبلغ. راجع الإجمالي الجديد ثم ادفع.', en: 'The total changed. Check the new total, then pay.' },
+  SHARE_UNAVAILABLE: { ar: 'هذا الجزء من الفاتورة لم يعد متاحًا. اختر مرة أخرى.', en: 'That part of the bill is no longer available. Choose again.' },
+  PAYMENT_IN_PROGRESS: { ar: 'دفعتك قيد التحقق. اضغط مرة أخرى بعد لحظات؛ لن يتم الخصم مرتين.', en: 'Your payment is being checked. Press again in a moment; you will not be charged twice.' },
+  CASHBACK_UNAVAILABLE: { ar: 'لا يمكن استخدام الكاش باك هنا أو الرصيد غير كافٍ.', en: 'Cashback can’t be used here, or the balance is too low.' },
+  INVALID_SPLIT: { ar: 'طريقة التقسيم غير صالحة لهذه الفاتورة.', en: 'That split isn’t possible for this bill.' },
+  VALIDATION: { ar: 'تحقق من البيانات المدخلة.', en: 'Please check what you entered.' },
+  CONSENT_REQUIRED: { ar: 'نحتاج موافقتك الصريحة على الشروط.', en: 'We need your explicit agreement to the terms.' },
+  NOT_FOUND: { ar: 'غير موجود.', en: 'Not found.' },
+};
+
+/** Translate an API error code; fall back to the server message. */
+export function errorText(code: string, locale: 'ar' | 'en', fallback: string): string {
+  return ERRORS[code]?.[locale] ?? fallback;
 }

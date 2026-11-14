@@ -18,8 +18,11 @@ export class InvoiceService {
     const bill = await tx.bill.findUniqueOrThrow({ where: { id: billId }, include: { table: { include: { branch: { include: { restaurant: true } } } }, invoice: true } });
     if (bill.invoice) return bill.invoice;
     const branch = bill.table.branch;
-    const counter = branch.invoiceCounter + 1;
-    const previousHash = branch.lastInvoiceHash ?? MOCK_GENESIS_HASH;
+    // Lock the branch row: the counter and hash chain are per branch, not per bill.
+    const [locked] = await tx.$queryRaw<{ invoiceCounter: number; lastInvoiceHash: string | null }[]>`
+      SELECT "invoiceCounter", "lastInvoiceHash" FROM "Branch" WHERE id = ${branch.id} FOR UPDATE`;
+    const counter = locked.invoiceCounter + 1;
+    const previousHash = locked.lastInvoiceHash ?? MOCK_GENESIS_HASH;
     const { vat } = vatFromInclusive(bill.total);
     const issuedAt = new Date(Math.floor(now.getTime() / 1000) * 1000);
     const timestamp = issuedAt.toISOString().replace('.000Z', 'Z');

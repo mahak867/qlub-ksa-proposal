@@ -2,7 +2,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, use, useEffect, useRef, useState } from 'react';
 import { computeCharge, TIP_PRESETS_PERCENT, tipFromPercent } from '@qlub-pay/core';
-import { api, ApiFailure, Bill, newIdempotencyKey, PaymentView } from '@/lib/api';
+import { api, ApiFailure, errorText, newIdempotencyKey, PaymentView } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { ErrorNote, Money } from '../../../shell';
 
@@ -11,10 +11,11 @@ type TipChoice = { kind: 'none' } | { kind: 'percent'; p: number } | { kind: 'ot
 function Review({ token }: { token: string }) {
   const q = useSearchParams();
   const shareId = q.get('share') ?? '';
-  const share = Number(q.get('amount') ?? 0);
+  // The share amount always comes from the server, never from the URL.
+  const [share, setShare] = useState<number | null>(null);
+  const [accepts, setAccepts] = useState<boolean | null>(null);
   const { t, locale } = useI18n();
   const router = useRouter();
-  const [bill, setBill] = useState<Bill | null>(null);
   // The default is NO tip. Nothing is pre-selected, and choosing "no tip" never asks "are you sure?".
   const [tipChoice, setTipChoice] = useState<TipChoice>({ kind: 'none' });
   const [otherTip, setOtherTip] = useState('');
@@ -26,16 +27,26 @@ function Review({ token }: { token: string }) {
   const pendingKey = useRef<string | null>(null);
 
   useEffect(() => {
-    api<Bill>(`/tables/${token}/bill`).then(setBill).catch(() => {});
-  }, [token]);
+    api<{ amount: number; status: string; acceptsCashback: boolean }>(`/shares/${shareId}`)
+      .then((s) => {
+        if (s.status !== 'RESERVED') return router.replace(`/t/${token}/split`);
+        setShare(s.amount);
+        setAccepts(s.acceptsCashback);
+      })
+      .catch(() => router.replace(`/t/${token}/split`));
+  }, [shareId, token, router]);
 
+  const amount = share ?? 0;
   const tip =
-    tipChoice.kind === 'percent' ? tipFromPercent(share, tipChoice.p) : tipChoice.kind === 'other' ? Math.max(0, Math.round(parseFloat(otherTip || '0') * 100) || 0) : 0;
-  const cashbackUse = useCb && balance ? Math.min(balance, share) : 0;
-  let breakdown = { share, tip, cashbackUsed: cashbackUse, charge: share + tip - cashbackUse };
+    tipChoice.kind === 'percent' ? tipFromPercent(amount, tipChoice.p) : tipChoice.kind === 'other' ? Math.max(0, Math.round(parseFloat(otherTip || '0') * 100) || 0) : 0;
+  const cashbackUse = useCb && balance ? Math.min(balance, amount) : 0;
+  let breakdown = { share: amount, tip, cashbackUsed: cashbackUse, charge: amount + tip - cashbackUse };
+  let invalid = share === null;
   try {
-    breakdown = computeCharge(share, tip, cashbackUse);
-  } catch {}
+    breakdown = computeCharge(amount, tip, cashbackUse);
+  } catch {
+    invalid = true;
+  }
 
   async function lookupBalance() {
     setErr(null);
@@ -65,13 +76,19 @@ function Review({ token }: { token: string }) {
           ...(breakdown.cashbackUsed > 0 ? { phone } : {}),
         },
       });
-      router.push(`/pay/${p.id}`);
+      router.push(`/pay/${p.id}?t=${encodeURIComponent(token)}`);
     } catch (e) {
-      if (e instanceof ApiFailure) {
-        pendingKey.current = null; // the server answered; nothing was charged
-        if (e.code === 'TOTAL_CHANGED') setErr(t('totalChanged'));
-        else if (e.code === 'SHARE_UNAVAILABLE') router.push(`/t/${token}/split`);
-        else setErr(e.message);
+      const keepKey = !(e instanceof ApiFailure) || e.status >= 500 || e.code === 'PAYMENT_IN_PROGRESS';
+      if (e instanceof ApiFailure && !keepKey) {
+        pendingKey.current = null; // the server answered and nothing was charged
+        if (e.code === 'TOTAL_CHANGED') {
+          const d = e.details as { share?: number } | null;
+          if (d?.share !== undefined) setShare(d.share); // show the server's numbers, then ask again
+          setErr(t('totalChanged'));
+        } else if (e.code === 'SHARE_UNAVAILABLE') router.push(`/t/${token}/split`);
+        else setErr(errorText(e.code, locale, e.message));
+      } else if (e instanceof ApiFailure && e.code === 'PAYMENT_IN_PROGRESS') {
+        setErr(errorText(e.code, locale, e.message)); // same key kept: pressing again shows the same payment
       } else {
         setErr(locale === 'ar' ? 'انقطع الاتصال. اضغط مرة أخرى؛ لن يتم الخصم مرتين.' : 'Connection lost. Press again; you will not be charged twice.');
       }
@@ -79,7 +96,6 @@ function Review({ token }: { token: string }) {
     }
   }
 
-  const accepts = bill?.branch.acceptsCashback;
 
   return (
     <>
@@ -87,7 +103,7 @@ function Review({ token }: { token: string }) {
       <div className="card">
         <div className="row">
           <span>{t('yourShare')}</span>
-          <Money value={share} />
+          <Money value={amount} />
         </div>
         <small className="muted">{t('vatIncluded')}</small>
       </div>
@@ -142,9 +158,9 @@ function Review({ token }: { token: string }) {
               </>
             )}
           </>
-        ) : (
+        ) : accepts === false ? (
           <p className="muted">{t('cashbackNotHere')}</p>
-        )}
+        ) : null}
       </div>
 
       <div className="card" aria-live="polite">
@@ -172,10 +188,10 @@ function Review({ token }: { token: string }) {
       </div>
 
       <ErrorNote message={err} />
-      <button className="btn" disabled={busy || !shareId} onClick={() => pay('MADA')}>
+      <button className="btn" disabled={busy || invalid} onClick={() => pay('MADA')}>
         {t('payMada')} · <Money value={breakdown.charge} />
       </button>
-      <button className="btn dark" disabled={busy || !shareId} onClick={() => pay('APPLE_PAY')}>
+      <button className="btn dark" disabled={busy || invalid} onClick={() => pay('APPLE_PAY')}>
         {t('payApple')} · <Money value={breakdown.charge} />
       </button>
       <p className="muted" style={{ textAlign: 'center' }}>

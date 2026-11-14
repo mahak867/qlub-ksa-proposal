@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { PaymentState, PrismaClient, PayMethod } from '@prisma/client';
+import { PaymentState, Prisma, PrismaClient, PayMethod } from '@prisma/client';
 import {
   ACTIVE_STATES,
   computeCharge,
@@ -12,6 +12,9 @@ import { ApiError } from '../errors';
 import { claimedUnits, lockBill, SHARE_RESERVATION_MS, Tx } from './bills';
 import { InvoiceService } from './invoices';
 import { CashbackService } from './cashback';
+
+/** How long expired/failed payments are re-polled for a late capture. */
+export const RECONCILE_WINDOW_MS = 24 * 3600_000;
 
 export interface CreatePaymentInput {
   shareId: string;
@@ -68,18 +71,27 @@ export class PaymentService {
     return view;
   }
 
-  private async claimKey(key: string, hash: string): Promise<{ replay?: unknown }> {
+  private async claimKey(key: string, hash: string, attempt = 0): Promise<{ replay?: unknown }> {
     try {
       await this.db.idempotencyRecord.create({ data: { key, requestHash: hash } });
       return {};
-    } catch {
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
       const rec = await this.db.idempotencyRecord.findUnique({ where: { key } });
-      if (!rec) return this.claimKey(key, hash);
+      if (!rec) {
+        if (attempt >= 2) throw new ApiError('PAYMENT_IN_PROGRESS', 'please try again');
+        return this.claimKey(key, hash, attempt + 1);
+      }
       if (rec.requestHash !== hash) throw new ApiError('IDEMPOTENCY_MISMATCH', 'this Idempotency-Key was used with a different request');
-      if (rec.responseBody) {
-        // Return the CURRENT state of the same payment, so a retry after a timeout sees progress.
-        const stored = rec.responseBody as { id?: string };
-        return { replay: stored.id ? await this.get(stored.id) : rec.responseBody };
+      // Whatever happened to the first request (finished, crashed, timed out), if a payment
+      // exists for this key, return its CURRENT state so the diner always reaches a status page.
+      const existing = await this.db.payment.findUnique({ where: { gatewayRef: key } });
+      if (existing) return { replay: await this.get(existing.id) };
+      // No payment was created: the first request either is still validating or died before
+      // reserving. After 30s it is safe to let this request take over the key.
+      if (Date.now() - rec.createdAt.getTime() > 30_000) {
+        await this.db.idempotencyRecord.deleteMany({ where: { key, createdAt: rec.createdAt } });
+        return this.claimKey(key, hash, attempt + 1);
       }
       throw new ApiError('PAYMENT_IN_PROGRESS', 'this payment request is already being processed');
     }
@@ -101,8 +113,6 @@ export class PaymentService {
       if (body.cashbackUse > 0) {
         if (!branch.acceptsCashback) throw new ApiError('CASHBACK_UNAVAILABLE', 'this branch does not accept cashback');
         if (!body.phone) throw new ApiError('CASHBACK_UNAVAILABLE', 'sign in to use cashback');
-        const balance = await this.cashback.balance(body.phone, tx);
-        if (body.cashbackUse > balance) throw new ApiError('CASHBACK_UNAVAILABLE', 'not enough cashback balance');
       }
 
       let breakdown;
@@ -129,6 +139,11 @@ export class PaymentService {
           deadlineAt: new Date(this.now().getTime() + PROCESSING_DEADLINE_MS),
         },
       });
+      if (body.cashbackUse > 0) {
+        // Hold the cashback now (under a per-phone lock), not on success, so two payments
+        // cannot both spend the same balance. Released again if the payment fails or expires.
+        await this.cashback.hold(tx, body.phone!, branch.id, body.cashbackUse, p.id);
+      }
       await tx.event.create({ data: { name: 'payment_started', billId: share.billId, paymentId: p.id, props: { tip: body.tip, cashback: body.cashbackUse } } });
       return p.id;
     });
@@ -155,7 +170,7 @@ export class PaymentService {
         const ok = await cas(tx, p.id, p.state, 'SUCCEEDED');
         if (!ok) return;
         await tx.share.update({ where: { id: share.id }, data: { status: 'PAID' } });
-        await this.cashback.onPaymentSucceeded(tx, p, share.bill.tableId);
+        await this.cashback.onPaymentSucceeded(tx, p, share.bill.tableId, this.now());
         await tx.event.create({ data: { name: 'payment_succeeded', billId: share.billId, paymentId: p.id, props: { late: p.state !== 'PROCESSING' } } });
         const paidSum = share.bill.shares.filter((s) => s.status === 'PAID' && s.id !== share.id).reduce((a, s) => a + s.amount, 0) + share.amount;
         if (paidSum === share.bill.total) {
@@ -174,6 +189,7 @@ export class PaymentService {
     await this.db.$transaction(async (tx) => {
       const ok = await cas(tx, paymentId, from, 'FAILED');
       if (ok) {
+        await this.cashback.release(tx, paymentId);
         const p = await tx.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { share: true } });
         await tx.event.create({ data: { name: 'payment_failed', billId: p.share.billId, paymentId } });
       }
@@ -196,48 +212,78 @@ export class PaymentService {
    *  - REFUND_DUE → refund (mock) → REFUNDED
    *  - RESERVED shares with no active payment older than the reservation window → RELEASED
    */
-  async recover(): Promise<{ expired: number; settled: number; refunded: number; released: number }> {
+  async recover(): Promise<{ expired: number; settled: number; refunded: number; released: number; errors: number }> {
     const now = this.now();
-    let expired = 0, settled = 0, refunded = 0, released = 0;
+    let expired = 0, settled = 0, refunded = 0, released = 0, errors = 0;
+    // One bad row must never stop the rest of the run.
+    const each = async <T>(rows: T[], fn: (row: T) => Promise<void>) => {
+      for (const row of rows) {
+        try {
+          await fn(row);
+        } catch (e) {
+          errors++;
+          console.error('recovery item failed', e);
+        }
+      }
+    };
 
     const overdue = await this.db.payment.findMany({ where: { state: 'PROCESSING', deadlineAt: { lt: now } } });
-    for (const p of overdue) {
+    await each(overdue, async (p) => {
       const status = await this.gateway.status(p.gatewayRef);
       if (status === 'CAPTURED') {
         await this.settleSuccess(p.id);
         settled++;
-        continue;
+        return;
       }
+      // Ask the gateway to void anything still pending before we tell the diner "not charged".
+      if (status === 'PENDING') await this.gateway.cancel(p.gatewayRef);
       const did = await this.db.$transaction(async (tx) => {
         const share = await tx.share.findUniqueOrThrow({ where: { id: p.shareId } });
         await lockBill(tx, share.billId);
         const ok = await cas(tx, p.id, 'PROCESSING', 'EXPIRED');
         if (ok) {
           await tx.share.updateMany({ where: { id: p.shareId, status: 'RESERVED' }, data: { status: 'RELEASED' } });
+          await this.cashback.release(tx, p.id);
           await tx.event.create({ data: { name: 'payment_expired', billId: share.billId, paymentId: p.id } });
         }
         return ok;
       });
       if (did) expired++;
-    }
+    });
+
+    // Late captures (§5.4.3): a void can lose the race and webhooks can be lost, so keep
+    // polling recently expired or failed payments and settle any that were captured after all.
+    const recent = await this.db.payment.findMany({
+      where: { state: { in: ['EXPIRED', 'FAILED'] }, updatedAt: { gt: new Date(now.getTime() - RECONCILE_WINDOW_MS) } },
+    });
+    await each(recent, async (p) => {
+      if ((await this.gateway.status(p.gatewayRef)) === 'CAPTURED') {
+        await this.settleSuccess(p.id);
+        settled++;
+      }
+    });
 
     const due = await this.db.payment.findMany({ where: { state: 'REFUND_DUE' } });
-    for (const p of due) {
-      // Mock refund: a real gateway call would go here, keyed by the payment reference.
+    await each(due, async (p) => {
+      // Mock refund: a real gateway refund call would go here, keyed by the payment reference.
       const ok = await this.db.$transaction((tx) => cas(tx, p.id, 'REFUND_DUE', 'REFUNDED'));
       if (ok) refunded++;
-    }
+    });
 
     const stale = await this.db.share.findMany({
       where: { status: 'RESERVED', createdAt: { lt: new Date(now.getTime() - SHARE_RESERVATION_MS) } },
-      include: { payments: true },
+      select: { id: true, billId: true },
     });
-    for (const s of stale) {
-      if (s.payments.some((p) => ACTIVE_STATES.has(p.state))) continue;
-      const r = await this.db.share.updateMany({ where: { id: s.id, status: 'RESERVED' }, data: { status: 'RELEASED' } });
-      released += r.count;
-    }
-    return { expired, settled, refunded, released };
+    await each(stale, async (s) => {
+      const r = await this.db.$transaction(async (tx) => {
+        await lockBill(tx, s.billId);
+        const active = await tx.payment.count({ where: { shareId: s.id, state: { in: ['CREATED', 'PROCESSING'] } } });
+        if (active > 0) return 0;
+        return (await tx.share.updateMany({ where: { id: s.id, status: 'RESERVED' }, data: { status: 'RELEASED' } })).count;
+      });
+      released += r;
+    });
+    return { expired, settled, refunded, released, errors };
   }
 
   async get(paymentId: string) {
@@ -257,7 +303,6 @@ export class PaymentService {
       billId: p.share.billId,
       billPaid: p.share.bill.status === 'PAID',
       invoiceNumber: p.share.bill.invoice?.number ?? null,
-      tableToken: p.share.bill.table.token,
       /** where "try again" should go: the same share if it is still held, otherwise choose again */
       retry: p.state === 'FAILED' && p.share.status === 'RESERVED' ? 'REVIEW' : 'SPLIT',
     };

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, afterAll } from 'vitest';
 import { randomUUID } from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { createContainer, Container } from '../src/container';
 import { seed, DEMO_TABLE_TOKEN, DEMO_PHONE } from '../src/seed';
 import { MEMBERSHIP_TERMS, DEMO_OTP } from '../src/services/memberships';
@@ -223,5 +223,92 @@ describe('P4: cashback', () => {
     await expect(c.payments.create(key(), { shareId: js.id, tip: 0, cashbackUse: 100, method: 'MADA', expectedTotal: js.amount - 100, phone: DEMO_PHONE })).rejects.toMatchObject({
       code: 'CASHBACK_UNAVAILABLE',
     });
+  });
+});
+
+describe('review fixes', () => {
+  it('cashback cannot be double-spent by two payments in flight', async () => {
+    const { newBill } = await import('../src/seed');
+    const t12 = await db.table.findFirstOrThrow({ where: { label: '12' } });
+    const b1 = await bill();
+    const b2 = await newBill(db, t12.id);
+    const s1 = await c.bills.createShare(b1.id, { mode: 'WHOLE' });
+    const s2 = await c.bills.createShare(b2.id, { mode: 'WHOLE' });
+    c.gateway.mode = 'HANG';
+    const results = await Promise.allSettled([
+      c.payments.create(key(), { shareId: s1.id, tip: 0, cashbackUse: 2500, method: 'MADA', expectedTotal: s1.amount - 2500, phone: DEMO_PHONE }),
+      c.payments.create(key(), { shareId: s2.id, tip: 0, cashbackUse: 2500, method: 'MADA', expectedTotal: s2.amount - 2500, phone: DEMO_PHONE }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'CASHBACK_UNAVAILABLE' } });
+    expect(await c.cashback.balance(DEMO_PHONE)).toBe(0);
+    // the held cashback comes back when the hung payment expires
+    clock = new Date(clock.getTime() + 91_000);
+    await c.payments.recover();
+    expect(await c.cashback.balance(DEMO_PHONE)).toBe(2500);
+  });
+
+  it('a capture after expiry is settled by re-polling even if the webhook is lost', async () => {
+    const b = await bill();
+    const s = await c.bills.createShare(b.id, { mode: 'WHOLE' });
+    c.gateway.mode = 'LATE_SUCCESS';
+    const p = await c.payments.create(key(), { shareId: s.id, tip: 0, cashbackUse: 0, method: 'MADA', expectedTotal: s.amount });
+    clock = new Date(clock.getTime() + 91_000);
+    await c.payments.recover();
+    expect((await c.payments.get(p.id)).state).toBe('EXPIRED');
+    c.gateway.settleLate((await db.payment.findUniqueOrThrow({ where: { id: p.id } })).gatewayRef); // no webhook
+    expect((await c.payments.recover()).settled).toBe(1);
+    expect((await c.payments.get(p.id)).status).toBe('PAID');
+  });
+
+  it('a hung charge is voided at the deadline', async () => {
+    const b = await bill();
+    const s = await c.bills.createShare(b.id, { mode: 'WHOLE' });
+    c.gateway.mode = 'HANG';
+    const p = await c.payments.create(key(), { shareId: s.id, tip: 0, cashbackUse: 0, method: 'MADA', expectedTotal: s.amount });
+    clock = new Date(clock.getTime() + 91_000);
+    await c.payments.recover();
+    const ref = (await db.payment.findUniqueOrThrow({ where: { id: p.id } })).gatewayRef;
+    expect(await c.gateway.status(ref)).toBe('DECLINED');
+  });
+
+  it('a retry with the same key reaches the payment even if the first response was never stored', async () => {
+    const b = await bill();
+    const s = await c.bills.createShare(b.id, { mode: 'WHOLE' });
+    const k = key();
+    const body = { shareId: s.id, tip: 0, cashbackUse: 0, method: 'MADA' as const, expectedTotal: s.amount };
+    const first = await c.payments.create(k, body);
+    await db.idempotencyRecord.update({ where: { key: k }, data: { responseBody: Prisma.DbNull } }); // simulate a crash after charging
+    const again = await c.payments.create(k, body);
+    expect(again.id).toBe(first.id);
+    expect(c.gateway.chargeCalls).toBe(1);
+  });
+
+  it('two bills on one branch completing together get different invoice numbers', async () => {
+    const { newBill } = await import('../src/seed');
+    const t12 = await db.table.findFirstOrThrow({ where: { label: '12' } });
+    const b1 = await bill();
+    const b2 = await newBill(db, t12.id);
+    const s1 = await c.bills.createShare(b1.id, { mode: 'WHOLE' });
+    const s2 = await c.bills.createShare(b2.id, { mode: 'WHOLE' });
+    await Promise.all([
+      c.payments.create(key(), { shareId: s1.id, tip: 0, cashbackUse: 0, method: 'MADA', expectedTotal: s1.amount }),
+      c.payments.create(key(), { shareId: s2.id, tip: 0, cashbackUse: 0, method: 'MADA', expectedTotal: s2.amount }),
+    ]);
+    const invs = await db.invoice.findMany({ orderBy: { number: 'asc' } });
+    expect(invs).toHaveLength(2);
+    expect(invs[0].number).not.toBe(invs[1].number);
+    // one chain, not a fork: the genesis invoice's hash is the other's previous hash
+    const genesis = invs.find((i) => i.previousHash.startsWith('MOCK'))!;
+    const next = invs.find((i) => i !== genesis)!;
+    expect(next.previousHash).toBe(genesis.hash);
+  });
+
+  it('membership offer needs a succeeded payment, and one phone gets one active membership', async () => {
+    const base = { phone: DEMO_PHONE, otp: DEMO_OTP, textVersion: MEMBERSHIP_TERMS.version, locale: 'en' as const, consent: true };
+    await expect(c.memberships.join({ ...base, paymentId: 'nope' })).rejects.toMatchObject({ code: 'VALIDATION' });
+    const m1 = await c.memberships.join(base);
+    const m2 = await c.memberships.join(base);
+    expect(m2.id).toBe(m1.id);
   });
 });

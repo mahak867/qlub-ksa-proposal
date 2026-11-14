@@ -11,7 +11,7 @@ import { PaymentService } from './services/payments';
 export function createContainer(db = new PrismaClient(), now: () => Date = () => new Date()) {
   const gateway = new MockGateway();
   const invoices = new InvoiceService(db);
-  const cashback = new CashbackService(db);
+  const cashback = new CashbackService(db, now);
   return {
     db,
     gateway,

@@ -19,6 +19,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { z } from 'zod';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule, Throttle } from '@nestjs/throttler';
 import { ApiError } from './errors';
 import { Container } from './container';
 import { DEMO_PHONE, seed } from './seed';
@@ -63,6 +65,12 @@ const JoinBody = z.object({
   paymentId: z.string().optional(),
 });
 
+/** Demo and merchant routes exist only when DEMO_MODE is not "0". They have no auth: never enable them on real data. */
+const DEMO = process.env.DEMO_MODE !== '0';
+function demoOnly() {
+  if (!DEMO) throw new ApiError('NOT_FOUND', 'not found');
+}
+
 @Controller()
 class ApiController {
   constructor(@Inject(CONTAINER) private readonly c: Container) {}
@@ -79,9 +87,15 @@ class ApiController {
     return view;
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('bills/:id/shares')
   createShare(@Param('id') id: string, @Body() body: unknown) {
     return this.c.bills.createShare(id, parse(ShareBody, body));
+  }
+
+  @Get('shares/:id')
+  share(@Param('id') id: string) {
+    return this.c.bills.getShare(id);
   }
 
   @Delete('shares/:id')
@@ -89,6 +103,7 @@ class ApiController {
     return this.c.bills.releaseShare(id);
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('payments')
   createPayment(@Headers('idempotency-key') key: string | undefined, @Body() body: unknown) {
     return this.c.payments.create(key, parse(PaymentBody, body));
@@ -116,6 +131,7 @@ class ApiController {
     return this.c.memberships.terms(locale === 'en' ? 'en' : 'ar');
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post('memberships')
   join(@Body() body: unknown) {
     return this.c.memberships.join(parse(JoinBody, body));
@@ -131,6 +147,7 @@ class ApiController {
     return this.c.memberships.cancel(id);
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Get('cashback')
   wallet(@Query('phone') p: string) {
     return this.c.cashback.wallet(parse(phone, p));
@@ -143,16 +160,19 @@ class ApiController {
 
   @Get('merchant/branches/:id/overview')
   overview(@Param('id') id: string) {
+    demoOnly();
     return this.c.merchant.overview(id);
   }
 
   @Get('merchant/branches/:id/sync-health')
   syncHealth(@Param('id') id: string) {
+    demoOnly();
     return this.c.merchant.syncHealth(id);
   }
 
   @Get('demo/info')
   async demoInfo() {
+    demoOnly();
     const t = await this.c.db.table.findFirst({ where: { label: '12' }, include: { branch: true } });
     return { token: t?.token, branchId: t?.branchId, gatewayMode: this.c.gateway.mode, phone: DEMO_PHONE, otp: DEMO_OTP };
   }
@@ -160,6 +180,7 @@ class ApiController {
   @Post('demo/gateway-mode')
   @HttpCode(200)
   mode(@Body() body: unknown) {
+    demoOnly();
     const { mode } = parse(z.object({ mode: z.enum(['APPROVE', 'DECLINE', 'HANG', 'LATE_SUCCESS']) }), body);
     this.c.gateway.mode = mode;
     return { mode };
@@ -169,6 +190,7 @@ class ApiController {
   @Post('demo/payments/:id/settle-late')
   @HttpCode(200)
   async settleLate(@Param('id') id: string) {
+    demoOnly();
     const p = await this.c.db.payment.findUnique({ where: { id } });
     if (!p) throw new ApiError('NOT_FOUND', 'payment not found');
     this.c.gateway.settleLate(p.gatewayRef);
@@ -180,6 +202,7 @@ class ApiController {
   @Post('demo/recover-now')
   @HttpCode(200)
   async recoverNow() {
+    demoOnly();
     await this.c.db.payment.updateMany({ where: { state: 'PROCESSING' }, data: { deadlineAt: new Date(Date.now() - 1000) } });
     return this.c.payments.recover();
   }
@@ -187,6 +210,7 @@ class ApiController {
   @Post('demo/reset')
   @HttpCode(200)
   async reset() {
+    demoOnly();
     this.c.gateway.mode = 'APPROVE';
     this.c.gateway.charges.clear();
     return seed(this.c.db);
@@ -205,7 +229,12 @@ export class ErrorFilter implements ExceptionFilter {
 }
 
 export function appModule(container: Container) {
-  @Module({ controllers: [ApiController], providers: [{ provide: CONTAINER, useValue: container }] })
+  @Module({
+    // Per-IP rate limits (SPEC §12): 120 requests/min overall; tighter on writes below.
+    imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }])],
+    controllers: [ApiController],
+    providers: [{ provide: CONTAINER, useValue: container }, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  })
   class AppModule implements OnModuleInit, OnModuleDestroy {
     timer?: NodeJS.Timeout;
     onModuleInit() {
