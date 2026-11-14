@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
-    "build": "next build",
+    "build": "pnpm --filter @qlub-pay/core build && next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "test": "echo 'web: no unit tests (logic lives in @qlub-pay/core)'"

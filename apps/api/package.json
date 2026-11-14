@@ -9,7 +9,8 @@
     "start": "node dist/main.js",
     "db:push": "prisma db push --skip-generate",
     "seed": "node dist/seed-cli.js",
-    "test": "DATABASE_URL=${TEST_DATABASE_URL:-postgresql://qlub:qlub@localhost:5432/qlubpay_test} prisma db push --skip-generate && vitest run"
+    "test": "DATABASE_URL=${TEST_DATABASE_URL:-postgresql://qlub:qlub@localhost:5432/qlubpay_test} prisma db push --skip-generate && vitest run",
+    "vercel-build": "prisma generate && sh -c 'DATABASE_URL=${DATABASE_URL_UNPOOLED:-$DATABASE_URL} prisma db push --skip-generate' && tsc -p tsconfig.json && node dist/seed-cli.js --if-empty"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.22",

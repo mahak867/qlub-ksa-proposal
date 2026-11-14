@@ -1,7 +1,16 @@
 {
-  "buildCommand": "cd ../.. && pnpm --filter @qlub-pay/core build && pnpm --filter api build",
+  "buildCommand": "cd ../.. && pnpm --filter @qlub-pay/core build && pnpm --filter api vercel-build",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
   "outputDirectory": ".",
-  "functions": { "api/index.js": { "includeFiles": "{dist/**,node_modules/.prisma/**,node_modules/@prisma/client/**}" } },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }]
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{dist/**,node_modules/.prisma/**,node_modules/@prisma/client/**}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.js"
+    }
+  ]
 }
